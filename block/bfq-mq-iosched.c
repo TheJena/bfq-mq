@@ -5066,10 +5066,12 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 }
 
 /* returns true if it causes the idle timer to be disabled */
-static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
+static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq,
+				 u64 *t_)
 {
 	struct bfq_queue *bfqq = RQ_BFQQ(rq), *new_bfqq;
 	bool waiting, idle_timer_disabled = false;
+	int j;
 	BUG_ON(!bfqq);
 
 	assert_spin_locked(&bfqd->lock);
@@ -5081,11 +5083,19 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 	 * driver: make sure we are in process context while trying to
 	 * merge two bfq_queues.
 	 */
+	t_[1] = ktime_get_ns();
 	if (!in_interrupt()) {
+		t_[2] = ktime_get_ns();
 		new_bfqq = bfq_setup_cooperator(bfqd, bfqq, rq, true);
+		t_[3] = ktime_get_ns();
 		if (new_bfqq) {
-			if (bic_to_bfqq(RQ_BIC(rq), 1) != bfqq)
+			if (bic_to_bfqq(RQ_BIC(rq), 1) != bfqq) {
+				t_[4] = ktime_get_ns();
 				new_bfqq = bic_to_bfqq(RQ_BIC(rq), 1);
+				t_[5] = ktime_get_ns();
+			} else
+				t_[5] = t_[4] = ktime_get_ns();
+			t_[6] = ktime_get_ns();
 			/*
 			 * Release the request's reference to the old bfqq
 			 * and make sure one is taken to the shared queue.
@@ -5107,11 +5117,17 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 			 * then complete the merge and redirect it to
 			 * new_bfqq.
 			 */
-			if (bic_to_bfqq(RQ_BIC(rq), 1) == bfqq)
+			t_[7] = ktime_get_ns();
+			if (bic_to_bfqq(RQ_BIC(rq), 1) == bfqq) {
+				t_[8] = ktime_get_ns();
 				bfq_merge_bfqqs(bfqd, RQ_BIC(rq),
 						bfqq, new_bfqq);
-
+				t_[9] = ktime_get_ns();
+			} else
+				t_[9] = t_[8] = ktime_get_ns();
+			t_[10] = ktime_get_ns();
 			bfq_clear_bfqq_just_created(bfqq);
+			t_[11] = ktime_get_ns();
 			/*
 			 * rq is about to be enqueued into new_bfqq,
 			 * release rq reference on bfqq
@@ -5119,17 +5135,31 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 			bfq_put_queue(bfqq);
 			rq->elv.priv[1] = new_bfqq;
 			bfqq = new_bfqq;
-		}
+			t_[12] = ktime_get_ns();
+		} else
+			for (j = 4; j < 13; j++)
+				t_[j] = t_[3];
+	} else {
+		t_[2] = ktime_get_ns();
+		for (j = 3; j < 13; j++)
+			t_[j] = t_[2];
 	}
 
+	t_[13] = ktime_get_ns();
 	waiting = bfqq && bfq_bfqq_wait_request(bfqq);
+	t_[14] = ktime_get_ns();
 	bfq_add_request(rq);
+	t_[15] = ktime_get_ns();
 	idle_timer_disabled = waiting && !bfq_bfqq_wait_request(bfqq);
+	t_[16] = ktime_get_ns();
 
 	rq->fifo_time = ktime_get_ns() + bfqd->bfq_fifo_expire[rq_is_sync(rq)];
+	t_[17] = ktime_get_ns();
 	list_add_tail(&rq->queuelist, &bfqq->fifo);
+	t_[18] = ktime_get_ns();
 
 	bfq_rq_enqueued(bfqd, bfqq, rq);
+	t_[19] = ktime_get_ns();
 
 	return idle_timer_disabled;
 }
@@ -5174,6 +5204,25 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 	struct bfq_queue *bfqq;
 	bool idle_timer_disabled = false;
 	unsigned int cmd_flags;
+	static const char * const names[] = {". __bfq_insert_request",
+					     "`-- initial assignments",
+					     "`-- in_interrupt",
+					     "`-- bfq_setup_cooperator",
+					     "`-- bic_to_bfqq",
+					     "`-- bic_to_bfqq",
+					     "`-- some increments/decrements",
+					     "`-- bic_to_bfqq",
+					     "`-- bfq_merge_bfqqs",
+					     "`-- bfq_clear_bfqq_just_created",
+					     "`-- bfq_put_queue",
+					     "`-- bfq_bfqq_wait_request",
+					     "`-- bfq_add_request",
+					     "`-- bfq_bfqq_wait_request",
+					     "`-- bfq_fifo_expire",
+					     "`-- list_add_tail",
+					     "`-- bfq_rq_enqueued"};
+	u64 t_[20], t_delta[17];
+	int j;
 
 	spin_lock_irq(&bfqd->lock);
 	if (blk_mq_sched_try_insert_merge(q, rq)) {
@@ -5211,7 +5260,32 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 		BUG_ON(!(rq->rq_flags & RQF_GOT));
 		rq->rq_flags &= ~RQF_GOT;
 
-		idle_timer_disabled = __bfq_insert_request(bfqd, rq);
+		memset(t_, 0, sizeof(t_));
+		t_[0] = ktime_get_ns();
+		idle_timer_disabled = __bfq_insert_request(bfqd, rq, t_);
+
+		t_delta[0] = t_[19] - t_[0];
+		t_delta[1] = t_[1] - t_[0];
+		t_delta[2] = t_[2] - t_[1];
+		t_delta[3] = t_[3] - t_[2];
+		t_delta[4] = t_[4] - t_[3];
+		t_delta[5] = t_[5] - t_[4];
+		t_delta[6] = t_[7] - t_[6];
+		t_delta[7] = t_[8] - t_[7];
+		t_delta[8] = t_[9] - t_[8];
+		t_delta[9] = t_[11] - t_[10];
+		t_delta[10] = t_[12] - t_[11];
+		t_delta[11] = t_[14] - t_[13];
+		t_delta[12] = t_[15] - t_[14];
+		t_delta[13] = t_[16] - t_[15];
+		t_delta[14] = t_[17] - t_[16];
+		t_delta[15] = t_[18] - t_[17];
+		t_delta[16] = t_[19] - t_[18];
+
+		for (j = 0; j < 17; j++)
+			trace_printk("%27s +%4d %-42s %8s %9llu %2s\n",
+				     __FILE__, __LINE__, names[j],
+				     "t_delta:", t_delta[j], "ns");
 		/*
 		 * Update bfqq, because, if a queue merge has occurred
 		 * in __bfq_insert_request, then rq has been
