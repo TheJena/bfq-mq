@@ -1778,7 +1778,7 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	}
 }
 
-static void bfq_add_request(struct request *rq)
+static void bfq_add_request(struct request *rq, u64 *t_)
 {
 	struct bfq_queue *bfqq = RQ_BFQQ(rq);
 	struct bfq_data *bfqd = bfqq->bfqd;
@@ -1788,7 +1788,6 @@ static void bfq_add_request(struct request *rq)
 
 	bfq_log_bfqq(bfqd, bfqq, "size %u %s",
 		     blk_rq_sectors(rq), rq_is_sync(rq) ? "S" : "A");
-
 	if (bfqq->wr_coeff > 1) /* queue is being weight-raised */
 		bfq_log_bfqq(bfqd, bfqq,
 			"raising period dur %u/%u msec, old coeff %u, w %d(%d)",
@@ -1804,32 +1803,43 @@ static void bfq_add_request(struct request *rq)
 	BUG_ON(RQ_BFQQ(rq) != bfqq);
 	WARN_ON(blk_rq_sectors(rq) == 0);
 
+	t_[1] = ktime_get_ns();
 	elv_rb_add(&bfqq->sort_list, rq);
+	t_[2] = ktime_get_ns();
 
 	/*
 	 * Check if this request is a better next-to-serve candidate.
 	 */
 	prev = bfqq->next_rq;
 	next_rq = bfq_choose_req(bfqd, bfqq->next_rq, rq, bfqd->last_position);
+	t_[3] = ktime_get_ns();
 	BUG_ON(!next_rq);
 	BUG_ON(!RQ_BFQQ(next_rq));
 	BUG_ON(RQ_BFQQ(next_rq) != bfqq);
 	bfqq->next_rq = next_rq;
+	t_[4] = ktime_get_ns();
 
 	/*
 	 * Adjust priority tree position, if next_rq changes.
 	 */
-	if (prev != bfqq->next_rq)
+	if (prev != bfqq->next_rq) {
 		bfq_pos_tree_add_move(bfqd, bfqq);
+		t_[5] = ktime_get_ns();
+	} else
+		t_[5] = t_[4];
 
-	if (!bfq_bfqq_busy(bfqq)) /* switching to busy ... */
+	if (!bfq_bfqq_busy(bfqq)) { /* switching to busy ... */
+		t_[6] = ktime_get_ns();
 		bfq_bfqq_handle_idle_busy_switch(bfqd, bfqq, old_wr_coeff,
 						 rq, &interactive);
-	else {
+		t_[10] = t_[9] = t_[8] = t_[7] = ktime_get_ns();
+	} else {
+		t_[7] = t_[6] = ktime_get_ns();
 		if (bfqd->low_latency && old_wr_coeff == 1 && !rq_is_sync(rq) &&
 		    time_is_before_jiffies(
 				bfqq->last_wr_start_finish +
 				bfqd->bfq_wr_min_inter_arr_async)) {
+			t_[8] = ktime_get_ns();
 			bfqq->wr_coeff = bfqd->bfq_wr_coeff;
 			bfqq->wr_cur_max_time = bfq_wr_duration(bfqd);
 
@@ -1841,9 +1851,15 @@ static void bfq_add_request(struct request *rq)
 				     "wr_max_time %u wr_busy %d",
 				     jiffies_to_msecs(bfqq->wr_cur_max_time),
 				     bfqd->wr_busy_queues);
-		}
-		if (prev != bfqq->next_rq)
+			t_[9] = ktime_get_ns();
+		} else
+			t_[9] = t_[8] = ktime_get_ns();
+
+		if (prev != bfqq->next_rq) {
 			bfq_updated_next_req(bfqd, bfqq);
+			t_[10] = ktime_get_ns();
+		} else
+			t_[10] = t_[9];
 	}
 
 	/*
@@ -5003,27 +5019,35 @@ static void bfq_update_has_short_ttime(struct bfq_data *bfqd,
  * something we should do about it.
  */
 static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
-			    struct request *rq)
+			    struct request *rq, u64 *t_)
 {
 	struct bfq_io_cq *bic = RQ_BIC(rq);
+	int j;
 
 	if (rq->cmd_flags & REQ_META)
 		bfqq->meta_pending++;
-
+	t_[13] = ktime_get_ns();
 	bfq_update_io_thinktime(bfqd, bfqq);
+	t_[14] = ktime_get_ns();
 	bfq_update_has_short_ttime(bfqd, bfqq, bic);
+	t_[15] = ktime_get_ns();
 	bfq_update_io_seektime(bfqd, bfqq, rq);
+	t_[16] = ktime_get_ns();
 
 	bfq_log_bfqq(bfqd, bfqq,
 		     "has_short_ttime=%d (seeky %d)",
 		     bfq_bfqq_has_short_ttime(bfqq), BFQQ_SEEKY(bfqq));
 
 	bfqq->last_request_pos = blk_rq_pos(rq) + blk_rq_sectors(rq);
+	t_[17] = ktime_get_ns();
 
 	if (bfqq == bfqd->in_service_queue && bfq_bfqq_wait_request(bfqq)) {
-		bool small_req = bfqq->queued[rq_is_sync(rq)] == 1 &&
-				 blk_rq_sectors(rq) < 32;
-		bool budget_timeout = bfq_bfqq_budget_timeout(bfqq);
+		bool small_req, budget_timeout;
+		t_[18] = ktime_get_ns();
+		small_req = bfqq->queued[rq_is_sync(rq)] == 1 &&
+			    blk_rq_sectors(rq) < 32;
+		budget_timeout = bfq_bfqq_budget_timeout(bfqq);
+		t_[19] = ktime_get_ns();
 
 		/*
 		 * There is just this request queued: if the request
@@ -5040,8 +5064,11 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		 * will be unplugged and larger requests will be
 		 * dispatched.
 		 */
-		if (small_req && !budget_timeout)
+		if (small_req && !budget_timeout) {
+			for (j = 20; j < 23; j++)
+				t_[j] = t_[19];
 			return;
+		}
 
 		/*
 		 * A large enough request arrived, or the queue is to
@@ -5050,7 +5077,9 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		 * timer.
 		 */
 		bfq_clear_bfqq_wait_request(bfqq);
+		t_[20] = ktime_get_ns();
 		hrtimer_try_to_cancel(&bfqd->idle_slice_timer);
+		t_[21] = ktime_get_ns();
 
 		/*
 		 * The queue is not empty, because a new request just
@@ -5059,9 +5088,16 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		 * timestamps of the queue are not updated correctly.
 		 * See [1] for more details.
 		 */
-		if (budget_timeout)
+		if (budget_timeout) {
 			bfq_bfqq_expire(bfqd, bfqq, false,
 					BFQ_BFQQ_BUDGET_TIMEOUT);
+			t_[22] = ktime_get_ns();
+		} else
+			t_[22] = t_[21];
+	} else {
+		t_[18] = ktime_get_ns();
+		for (j = 19; j < 23; j++)
+			t_[j] = t_[18];
 	}
 }
 
@@ -5070,6 +5106,31 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 {
 	struct bfq_queue *bfqq = RQ_BFQQ(rq), *new_bfqq;
 	bool waiting, idle_timer_disabled = false;
+	static const char * const names[] = {
+		".   bfq_add_request",
+		"`-- initial assignments",
+		"`-- elv_rb_add",
+		"`-- bfq_choose_req",
+		"`-- some BUG_ON",
+		"`-- bfq_pos_tree_add_move",
+		"`-- bfq_bfqq_busy",
+		"`-- bfq_bfqq_handle_idle_busy_switch",
+		"`-- time_is_before_jiffies if-condition",
+		"`-- some assignements and BUG_ON",
+		"`-- bfq_updated_next_req",
+		".   bfq_rq_enqueued",
+		"`-- initial assignments",
+		"`-- bfq_update_io_thinktime",
+		"`-- bfq_update_has_short_ttime",
+		"`-- bfq_update_io_seektime",
+		"`-- blk_rq_pos + blk_rq_sectors",
+		"`-- bfq_bfqq_wait_request",
+		"`-- bfq_bfqq_budget_timeout",
+		"`-- bfq_clear_bfqq_wait_request",
+		"`-- hrtimer_try_to_cancel",
+		"`-- bfq_bfqq_expire"};
+	u64 t_[24], t_delta[22];
+	int j;
 	BUG_ON(!bfqq);
 
 	assert_spin_locked(&bfqd->lock);
@@ -5123,13 +5184,31 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 	}
 
 	waiting = bfqq && bfq_bfqq_wait_request(bfqq);
-	bfq_add_request(rq);
+	memset(t_, 0, sizeof(t_));
+	t_[0] = ktime_get_ns();
+	bfq_add_request(rq, t_);
+	t_[11] = ktime_get_ns();
 	idle_timer_disabled = waiting && !bfq_bfqq_wait_request(bfqq);
 
 	rq->fifo_time = ktime_get_ns() + bfqd->bfq_fifo_expire[rq_is_sync(rq)];
 	list_add_tail(&rq->queuelist, &bfqq->fifo);
 
-	bfq_rq_enqueued(bfqd, bfqq, rq);
+	t_[12] = ktime_get_ns();
+	bfq_rq_enqueued(bfqd, bfqq, rq, t_);
+	t_[23] = ktime_get_ns();
+
+	t_delta[0] = t_[11] - t_[0];
+	for (j = 1; j < 11; j++)
+		t_delta[j] = t_[j] - t_[j-1];
+
+	t_delta[11] = t_[23] - t_[12];
+	for (j = 13; j < 23; j++)
+		t_delta[j-1] = t_[j] - t_[j-1];
+
+	for (j = 0; j < 22; j++)
+		trace_printk("%27s +%4d %-42s %8s %9llu %2s\n",
+			     __FILE__, __LINE__, names[j],
+			     "t_delta:", t_delta[j], "ns");
 
 	return idle_timer_disabled;
 }
