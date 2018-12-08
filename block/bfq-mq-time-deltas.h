@@ -26,7 +26,7 @@
  * Print the time needed to execute the
  * measured piece of code (t_delta [ns])
  */
-#define TIME_DELTA_PRINT_DURATIONS
+// #define TIME_DELTA_PRINT_DURATIONS
 
 /*
  * Print the total cumulative execution time
