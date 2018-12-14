@@ -119,6 +119,7 @@
 #include "blk-mq-tag.h"
 #include "blk-mq-sched.h"
 #include "bfq-mq.h"
+#include "bfq-mq-time-deltas.h"
 #include "blk-wbt.h"
 
 /* Expiration time of sync (0) and async (1) requests, in ns. */
@@ -342,12 +343,15 @@ static struct bfq_io_cq *bfq_bic_lookup(struct bfq_data *bfqd,
 					struct io_context *ioc,
 					struct request_queue *q)
 {
+	TIME_DELTAS_INIT(1);
 	if (ioc) {
 		unsigned long flags;
 		struct bfq_io_cq *icq;
 
 		spin_lock_irqsave(q->queue_lock, flags);
+		TIME_DELTA_RECORD_START;
 		icq = icq_to_bic(ioc_lookup_icq(ioc, q));
+		TIME_DELTA_RECORD_STOP("icq_to_bic");
 		spin_unlock_irqrestore(q->queue_lock, flags);
 
 		return icq;
@@ -2015,18 +2019,23 @@ static bool bfq_bio_merge(struct blk_mq_hw_ctx *hctx, struct bio *bio)
 	 */
 	struct bfq_io_cq *bic = bfq_bic_lookup(bfqd, current->io_context, q);
 	bool ret;
+	TIME_DELTAS_INIT(3);
 
 	spin_lock_irq(&bfqd->lock);
 
-	if (bic)
+	if (bic) {
+		TIME_DELTA_RECORD_START;
 		bfqd->bio_bfqq = bic_to_bfqq(bic, op_is_sync(bio->bi_opf));
-	else
+		TIME_DELTA_RECORD_STOP("bic_to_bfqq");
+	} else
 		bfqd->bio_bfqq = NULL;
 	bfqd->bio_bic = bic;
 	/* Set next flag just for testing purposes */
 	bfqd->bio_bfqq_set = true;
 
+	TIME_DELTA_RECORD_START;
 	ret = blk_mq_sched_try_merge(q, bio, &free);
+	TIME_DELTA_RECORD_STOP("blk_mq_sched_try_merge");
 
 	/*
 	 * XXX Not yet freeing without lock held, to avoid an
@@ -2034,8 +2043,11 @@ static bool bfq_bio_merge(struct blk_mq_hw_ctx *hctx, struct bio *bio)
 	 * of blk_mq_sched_try_insert_merge in bfq_bio_merge. Waiting
 	 * for clarifications from Jens.
 	 */
-	if (free)
+	if (free) {
+		TIME_DELTA_RECORD_START;
 		blk_mq_free_request(free);
+		TIME_DELTA_RECORD_STOP("blk_mq_free_request");
+	}
 	bfqd->bio_bfqq_set = false;
 	spin_unlock_irq(&bfqd->lock);
 
@@ -2200,14 +2212,23 @@ static void bfq_end_wr_async_queues(struct bfq_data *bfqd,
 static void bfq_end_wr(struct bfq_data *bfqd)
 {
 	struct bfq_queue *bfqq;
+	TIME_DELTAS_INIT(3);
 
 	spin_lock_irq(&bfqd->lock);
 
-	list_for_each_entry(bfqq, &bfqd->active_list, bfqq_list)
+	list_for_each_entry(bfqq, &bfqd->active_list, bfqq_list) {
+		TIME_DELTA_RECORD_START;
 		bfq_bfqq_end_wr(bfqq);
-	list_for_each_entry(bfqq, &bfqd->idle_list, bfqq_list)
+		TIME_DELTA_RECORD_STOP("bfq_bfqq_end_wr");
+	}
+	list_for_each_entry(bfqq, &bfqd->idle_list, bfqq_list) {
+		TIME_DELTA_RECORD_START;
 		bfq_bfqq_end_wr(bfqq);
+		TIME_DELTA_RECORD_STOP("bfq_bfqq_end_wr");
+	}
+	TIME_DELTA_RECORD_START;
 	bfq_end_wr_async(bfqd);
+	TIME_DELTA_RECORD_STOP("bfq_end_wr_async");
 
 	spin_unlock_irq(&bfqd->lock);
 }
@@ -2590,6 +2611,7 @@ static bool bfq_allow_bio_merge(struct request_queue *q, struct request *rq,
 	struct bfq_data *bfqd = q->elevator->elevator_data;
 	bool is_sync = op_is_sync(bio->bi_opf);
 	struct bfq_queue *bfqq = bfqd->bio_bfqq, *new_bfqq;
+	TIME_DELTAS_INIT(2);
 
 	assert_spin_locked(&bfqd->lock);
 	/*
@@ -2610,7 +2632,9 @@ static bool bfq_allow_bio_merge(struct request_queue *q, struct request *rq,
 	 * We take advantage of this function to perform an early merge
 	 * of the queues of possible cooperating processes.
 	 */
+	TIME_DELTA_RECORD_START;
 	new_bfqq = bfq_setup_cooperator(bfqd, bfqq, bio, false);
+	TIME_DELTA_RECORD_STOP("bfq_setup_cooperator");
 	BUG_ON(new_bfqq == bfqq);
 	if (new_bfqq) {
 		/*
@@ -2620,8 +2644,10 @@ static bool bfq_allow_bio_merge(struct request_queue *q, struct request *rq,
 		 * fulfillled, i.e., bic can be redirected to new_bfqq
 		 * and bfqq can be put.
 		 */
+		TIME_DELTA_RECORD_START;
 		bfq_merge_bfqqs(bfqd, bfqd->bio_bic, bfqq,
 				new_bfqq);
+		TIME_DELTA_RECORD_STOP("bfq_merge_bfqqs");
 		/*
 		 * If we get here, bio will be queued into new_queue,
 		 * so use new_bfqq to decide whether bio and rq can be
@@ -4501,6 +4527,7 @@ static void bfq_update_dispatch_stats(struct request_queue *q,
 				      bool idle_timer_disabled)
 {
 	struct bfq_queue *bfqq = rq ? RQ_BFQQ(rq) : NULL;
+	TIME_DELTAS_INIT(4);
 
 	if (!idle_timer_disabled && !bfqq)
 		return;
@@ -4519,7 +4546,7 @@ static void bfq_update_dispatch_stats(struct request_queue *q,
 	 * bfqq_group(bfqq) exists as well.
 	 */
 	spin_lock_irq(q->queue_lock);
-	if (idle_timer_disabled)
+	if (idle_timer_disabled) {
 		/*
 		 * Since the idle timer has been disabled,
 		 * in_serv_queue contained some request when
@@ -4529,13 +4556,24 @@ static void bfq_update_dispatch_stats(struct request_queue *q,
 		 * therefore guaranteed to exist because of the above
 		 * arguments.
 		 */
+		TIME_DELTA_RECORD_START;
 		bfqg_stats_update_idle_time(bfqq_group(in_serv_queue));
+		TIME_DELTA_RECORD_STOP("bfqg_stats_update_idle_time");
+	}
 	if (bfqq) {
 		struct bfq_group *bfqg = bfqq_group(bfqq);
 
+		TIME_DELTA_RECORD_START;
 		bfqg_stats_update_avg_queue_size(bfqg);
+		TIME_DELTA_RECORD_STOP("bfqg_stats_update_avg_queue_size");
+
+		TIME_DELTA_RECORD_START;
 		bfqg_stats_set_start_empty_time(bfqg);
+		TIME_DELTA_RECORD_STOP("bfqg_stats_set_start_empty_time");
+
+		TIME_DELTA_RECORD_START;
 		bfqg_stats_update_io_remove(bfqg, rq->cmd_flags);
+		TIME_DELTA_RECORD_STOP("bfqg_stats_update_io_remove");
 	}
 	spin_unlock_irq(q->queue_lock);
 }
@@ -4551,16 +4589,23 @@ static struct request *bfq_dispatch_request(struct blk_mq_hw_ctx *hctx)
 	struct request *rq;
 	struct bfq_queue *in_serv_queue;
 	bool waiting_rq, idle_timer_disabled;
+	TIME_DELTAS_INIT(3);
 
 	spin_lock_irq(&bfqd->lock);
 
 	in_serv_queue = bfqd->in_service_queue;
+	TIME_DELTA_RECORD_START;
 	waiting_rq = in_serv_queue && bfq_bfqq_wait_request(in_serv_queue);
+	TIME_DELTA_RECORD_STOP("bfq_bfqq_wait_request");
 
+	TIME_DELTA_RECORD_START;
 	rq = __bfq_dispatch_request(hctx);
+	TIME_DELTA_RECORD_STOP("bfq_dispatch_request");
 
+	TIME_DELTA_RECORD_START;
 	idle_timer_disabled =
 		waiting_rq && !bfq_bfqq_wait_request(in_serv_queue);
+	TIME_DELTA_RECORD_STOP("bfq_bfqq_wait_requests");
 
 	spin_unlock_irq(&bfqd->lock);
 
@@ -4582,6 +4627,7 @@ static void bfq_put_queue(struct bfq_queue *bfqq)
 #ifdef BFQ_GROUP_IOSCHED_ENABLED
 	struct bfq_group *bfqg = bfqq_group(bfqq);
 #endif
+	TIME_DELTAS_INIT(2);
 
 	assert_spin_locked(&bfqq->bfqd->lock);
 
@@ -4599,8 +4645,13 @@ static void bfq_put_queue(struct bfq_queue *bfqq)
 	BUG_ON(bfqq->entity.tree);
 	BUG_ON(bfq_bfqq_busy(bfqq));
 
+	TIME_DELTA_RECORD_START;
 	if (!hlist_unhashed(&bfqq->burst_list_node)) {
+		TIME_DELTA_RECORD_STOP("hlist_unhashed");
+
+		TIME_DELTA_RECORD_START;
 		hlist_del_init(&bfqq->burst_list_node);
+		TIME_DELTA_RECORD_STOP("hlist_del_init");
 		/*
 		 * Decrement also burst size after the removal, if the
 		 * process associated with bfqq is exiting, and thus
@@ -4629,7 +4680,8 @@ static void bfq_put_queue(struct bfq_queue *bfqq)
 		 */
 		if (bfqq->bic && bfqq->bfqd->burst_size > 0)
 			bfqq->bfqd->burst_size--;
-	}
+	} else
+		TIME_DELTA_RECORD_STOP("hlist_unhashed");
 
 	if (bfqq->bfqd)
 		bfq_log_bfqq(bfqq->bfqd, bfqq, "%p freed", bfqq);
@@ -4678,6 +4730,7 @@ static void bfq_exit_icq_bfqq(struct bfq_io_cq *bic, bool is_sync)
 {
 	struct bfq_queue *bfqq = bic_to_bfqq(bic, is_sync);
 	struct bfq_data *bfqd;
+	TIME_DELTAS_INIT(2);
 
 	if (bfqq)
 		bfqd = bfqq->bfqd; /* NULL if scheduler already exited */
@@ -4686,8 +4739,12 @@ static void bfq_exit_icq_bfqq(struct bfq_io_cq *bic, bool is_sync)
 		unsigned long flags;
 
 		spin_lock_irqsave(&bfqd->lock, flags);
+		TIME_DELTA_RECORD_START;
 		bfq_exit_bfqq(bfqd, bfqq);
+		TIME_DELTA_RECORD_STOP("bfq_exit_bfqq");
+		TIME_DELTA_RECORD_START;
 		bic_set_bfqq(bic, NULL, is_sync);
+		TIME_DELTA_RECORD_STOP("bic_set_bfqq");
 		spin_unlock_irqrestore(&bfqd->lock, flags);
 	}
 }
@@ -5070,6 +5127,7 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 {
 	struct bfq_queue *bfqq = RQ_BFQQ(rq), *new_bfqq;
 	bool waiting, idle_timer_disabled = false;
+	TIME_DELTAS_INIT(13);
 	BUG_ON(!bfqq);
 
 	assert_spin_locked(&bfqd->lock);
@@ -5081,11 +5139,24 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 	 * driver: make sure we are in process context while trying to
 	 * merge two bfq_queues.
 	 */
+	TIME_DELTA_RECORD_START;
 	if (!in_interrupt()) {
+		TIME_DELTA_RECORD_STOP("in_interrupt");
+
+		TIME_DELTA_RECORD_START;
 		new_bfqq = bfq_setup_cooperator(bfqd, bfqq, rq, true);
+		TIME_DELTA_RECORD_STOP("bfq_setup_cooperator");
+
 		if (new_bfqq) {
-			if (bic_to_bfqq(RQ_BIC(rq), 1) != bfqq)
+			TIME_DELTA_RECORD_START;
+			if (bic_to_bfqq(RQ_BIC(rq), 1) != bfqq) {
+				TIME_DELTA_RECORD_STOP("bic_to_bfqq");
+
+				TIME_DELTA_RECORD_START;
 				new_bfqq = bic_to_bfqq(RQ_BIC(rq), 1);
+				TIME_DELTA_RECORD_STOP("bic_to_bfqq");
+			} else
+				TIME_DELTA_RECORD_STOP("bic_to_bfqq");
 			/*
 			 * Release the request's reference to the old bfqq
 			 * and make sure one is taken to the shared queue.
@@ -5107,29 +5178,56 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 			 * then complete the merge and redirect it to
 			 * new_bfqq.
 			 */
-			if (bic_to_bfqq(RQ_BIC(rq), 1) == bfqq)
+			TIME_DELTA_RECORD_START;
+			if (bic_to_bfqq(RQ_BIC(rq), 1) == bfqq) {
+				TIME_DELTA_RECORD_STOP("bic_to_bfqq");
+
+				TIME_DELTA_RECORD_START;
 				bfq_merge_bfqqs(bfqd, RQ_BIC(rq),
 						bfqq, new_bfqq);
+				TIME_DELTA_RECORD_STOP("bfq_merge_bfqqs");
+			} else
+				TIME_DELTA_RECORD_STOP("bic_to_bfqq");
 
+			TIME_DELTA_RECORD_START;
 			bfq_clear_bfqq_just_created(bfqq);
+			TIME_DELTA_RECORD_STOP("bfq_clear_bfqq_just_created");
 			/*
 			 * rq is about to be enqueued into new_bfqq,
 			 * release rq reference on bfqq
 			 */
+
+			TIME_DELTA_RECORD_START;
 			bfq_put_queue(bfqq);
+			TIME_DELTA_RECORD_STOP("bfq_put_queue");
+
 			rq->elv.priv[1] = new_bfqq;
 			bfqq = new_bfqq;
 		}
-	}
+	} else
+		TIME_DELTA_RECORD_STOP("in_interrupt");
 
+	TIME_DELTA_RECORD_START;
 	waiting = bfqq && bfq_bfqq_wait_request(bfqq);
+	TIME_DELTA_RECORD_STOP("bfq_bfqq_wait_request");
+
+	TIME_DELTA_RECORD_START;
 	bfq_add_request(rq);
+	TIME_DELTA_RECORD_STOP("bfq_add_request");
+
+	TIME_DELTA_RECORD_START;
 	idle_timer_disabled = waiting && !bfq_bfqq_wait_request(bfqq);
+	TIME_DELTA_RECORD_STOP("bfq_bfqq_wait_request");
 
 	rq->fifo_time = ktime_get_ns() + bfqd->bfq_fifo_expire[rq_is_sync(rq)];
-	list_add_tail(&rq->queuelist, &bfqq->fifo);
 
+	TIME_DELTA_RECORD_START;
+	list_add_tail(&rq->queuelist, &bfqq->fifo);
+	TIME_DELTA_RECORD_STOP("list_add_tail");
+
+	TIME_DELTA_RECORD_START;
 	bfq_rq_enqueued(bfqd, bfqq, rq);
+	TIME_DELTA_RECORD_STOP("bfq_rq_enqueued");
 
 	return idle_timer_disabled;
 }
@@ -5140,6 +5238,7 @@ static void bfq_update_insert_stats(struct request_queue *q,
 				    bool idle_timer_disabled,
 				    unsigned int cmd_flags)
 {
+	TIME_DELTAS_INIT(2);
 	if (!bfqq)
 		return;
 
@@ -5154,9 +5253,15 @@ static void bfq_update_insert_stats(struct request_queue *q,
 	 * bfqq_group(bfqq) exists as well.
 	 */
 	spin_lock_irq(q->queue_lock);
+	TIME_DELTA_RECORD_START;
 	bfqg_stats_update_io_add(bfqq_group(bfqq), bfqq, cmd_flags);
-	if (idle_timer_disabled)
+	TIME_DELTA_RECORD_STOP("bfqg_stats_update_io_add");
+
+	if (idle_timer_disabled) {
+		TIME_DELTA_RECORD_START;
 		bfqg_stats_update_idle_time(bfqq_group(bfqq));
+		TIME_DELTA_RECORD_STOP("bfqg_stats_update_idle_time");
+	}
 	spin_unlock_irq(q->queue_lock);
 }
 #else
@@ -5174,12 +5279,17 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 	struct bfq_queue *bfqq;
 	bool idle_timer_disabled = false;
 	unsigned int cmd_flags;
+	TIME_DELTAS_INIT(7);
 
 	spin_lock_irq(&bfqd->lock);
+	TIME_DELTA_RECORD_START;
 	if (blk_mq_sched_try_insert_merge(q, rq)) {
+		TIME_DELTA_RECORD_STOP("blk_mq_sched_try_insert_merge");
 		spin_unlock_irq(&bfqd->lock);
 		return;
 	}
+
+	TIME_DELTA_RECORD_STOP("blk_mq_sched_try_insert_merge");
 
 	spin_unlock_irq(&bfqd->lock);
 
@@ -5187,15 +5297,23 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 
 	spin_lock_irq(&bfqd->lock);
 
+	TIME_DELTA_RECORD_START;
 	bfqq = bfq_init_rq(rq);
+	TIME_DELTA_RECORD_STOP("bfq_init_rq");
+
 	BUG_ON(!bfqq && !(at_head || blk_rq_is_passthrough(rq)));
 	BUG_ON(bfqq && bic_to_bfqq(RQ_BIC(rq), rq_is_sync(rq)) != bfqq);
 
 	if (at_head || blk_rq_is_passthrough(rq)) {
-		if (at_head)
+		if (at_head) {
+			TIME_DELTA_RECORD_START;
 			list_add(&rq->queuelist, &bfqd->dispatch);
-		else
+			TIME_DELTA_RECORD_STOP("list_add");
+		} else {
+			TIME_DELTA_RECORD_START;
 			list_add_tail(&rq->queuelist, &bfqd->dispatch);
+			TIME_DELTA_RECORD_STOP("list_add_tail");
+		}
 
 		rq->rq_flags |= RQF_DISP_LIST;
 		if (bfqq)
@@ -5211,16 +5329,22 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 		BUG_ON(!(rq->rq_flags & RQF_GOT));
 		rq->rq_flags &= ~RQF_GOT;
 
+		TIME_DELTA_RECORD_START;
 		idle_timer_disabled = __bfq_insert_request(bfqd, rq);
+		TIME_DELTA_RECORD_STOP("__bfq_insert_request");
 		/*
 		 * Update bfqq, because, if a queue merge has occurred
 		 * in __bfq_insert_request, then rq has been
 		 * redirected into a new queue.
 		 */
+		TIME_DELTA_RECORD_START;
 		bfqq = RQ_BFQQ(rq);
+		TIME_DELTA_RECORD_STOP("RQ_BFQQ");
 
 		if (rq_mergeable(rq)) {
+			TIME_DELTA_RECORD_START;
 			elv_rqhash_add(q, rq);
+			TIME_DELTA_RECORD_STOP("elv_rqhash_add");
 			if (!q->last_merge)
 				q->last_merge = rq;
 		}
@@ -5425,6 +5549,7 @@ static void bfq_finish_requeue_request(struct request *rq)
 	struct bfq_queue *bfqq;
 	struct bfq_data *bfqd;
 	struct bfq_io_cq *bic;
+	TIME_DELTAS_INIT(4);
 
 	BUG_ON(!rq);
 
@@ -5480,8 +5605,13 @@ static void bfq_finish_requeue_request(struct request *rq)
 
 		spin_lock_irqsave(&bfqd->lock, flags);
 
+		TIME_DELTA_RECORD_START;
 		bfq_completed_request(bfqq, bfqd);
+		TIME_DELTA_RECORD_STOP("bfq_completed_request");
+
+		TIME_DELTA_RECORD_START;
 		bfq_finish_requeue_request_body(bfqq);
+		TIME_DELTA_RECORD_STOP("bfq_finish_requeue_request_body");
 
 		spin_unlock_irqrestore(&bfqd->lock, flags);
 	} else {
@@ -5501,9 +5631,14 @@ static void bfq_finish_requeue_request(struct request *rq)
 
 		assert_spin_locked(&bfqd->lock);
 		if (!RB_EMPTY_NODE(&rq->rb_node)) {
+			TIME_DELTA_RECORD_START;
 			bfq_remove_request(rq->q, rq);
+			TIME_DELTA_RECORD_STOP("bfq_remove_request");
+
+			TIME_DELTA_RECORD_START;
 			bfqg_stats_update_io_remove(bfqq_group(bfqq),
 						    rq->cmd_flags);
+			TIME_DELTA_RECORD_STOP("bfqg_stats_update_io_remove");
 		}
 		bfq_finish_requeue_request_body(bfqq);
 	}
@@ -5773,26 +5908,32 @@ static void bfq_idle_slice_timer_body(struct bfq_queue *bfqq)
 	struct bfq_data *bfqd = bfqq->bfqd;
 	enum bfqq_expiration reason;
 	unsigned long flags;
+	TIME_DELTAS_INIT(3);
 
 	BUG_ON(!bfqd);
 	spin_lock_irqsave(&bfqd->lock, flags);
 
 	bfq_log_bfqq(bfqd, bfqq, "handling slice_timer expiration");
+	TIME_DELTA_RECORD_START;
 	bfq_clear_bfqq_wait_request(bfqq);
+	TIME_DELTA_RECORD_STOP("bfq_clear_bfqq_wait_request");
 
 	if (bfqq != bfqd->in_service_queue) {
 		spin_unlock_irqrestore(&bfqd->lock, flags);
 		return;
 	}
 
-	if (bfq_bfqq_budget_timeout(bfqq))
+	TIME_DELTA_RECORD_START;
+	if (bfq_bfqq_budget_timeout(bfqq)) {
+		TIME_DELTA_RECORD_STOP("bfq_bfqq_budget_timeout");
 		/*
 		 * Also here the queue can be safely expired
 		 * for budget timeout without wasting
 		 * guarantees
 		 */
 		reason = BFQ_BFQQ_BUDGET_TIMEOUT;
-	else if (bfqq->queued[0] == 0 && bfqq->queued[1] == 0)
+	} else if (bfqq->queued[0] == 0 && bfqq->queued[1] == 0) {
+		TIME_DELTA_RECORD_STOP("bfq_bfqq_budget_timeout");
 		/*
 		 * The queue may not be empty upon timer expiration,
 		 * because we may not disable the timer when the
@@ -5800,10 +5941,14 @@ static void bfq_idle_slice_timer_body(struct bfq_queue *bfqq)
 		 * during disk idling.
 		 */
 		reason = BFQ_BFQQ_TOO_IDLE;
-	else
+	} else {
+		TIME_DELTA_RECORD_STOP("bfq_bfqq_budget_timeout");
 		goto schedule_dispatch;
+	}
 
+	TIME_DELTA_RECORD_START;
 	bfq_bfqq_expire(bfqd, bfqq, true, reason);
+	TIME_DELTA_RECORD_STOP("bfq_bfqq_expire");
 
 schedule_dispatch:
 	spin_unlock_irqrestore(&bfqd->lock, flags);
@@ -5931,6 +6076,7 @@ static void bfq_exit_queue(struct elevator_queue *e)
 {
 	struct bfq_data *bfqd = e->elevator_data;
 	struct bfq_queue *bfqq, *n;
+	TIME_DELTAS_INIT(2);
 
 	bfq_log(bfqd, "starting ...");
 
@@ -5940,8 +6086,11 @@ static void bfq_exit_queue(struct elevator_queue *e)
 	BUG_ON(!list_empty(&bfqd->active_list));
 
 	spin_lock_irq(&bfqd->lock);
-	list_for_each_entry_safe(bfqq, n, &bfqd->idle_list, bfqq_list)
+	list_for_each_entry_safe(bfqq, n, &bfqd->idle_list, bfqq_list) {
+		TIME_DELTA_RECORD_START;
 		bfq_deactivate_bfqq(bfqd, bfqq, false, false);
+		TIME_DELTA_RECORD_STOP("bfq_deactivate_bfqq");
+	}
 	spin_unlock_irq(&bfqd->lock);
 
 	hrtimer_cancel(&bfqd->idle_slice_timer);
@@ -5955,7 +6104,9 @@ static void bfq_exit_queue(struct elevator_queue *e)
 	blkcg_deactivate_policy(bfqd->queue, &blkcg_policy_bfq);
 #else
 	spin_lock_irq(&bfqd->lock);
+	TIME_DELTA_RECORD_START;
 	bfq_put_async_queues(bfqd, bfqd->root_group);
+	TIME_DELTA_RECORD_STOP("bfq_put_async_queues");
 	kfree(bfqd->root_group);
 	spin_unlock_irq(&bfqd->lock);
 #endif
@@ -6153,12 +6304,13 @@ static ssize_t bfq_weights_show(struct elevator_queue *e, char *page)
 	struct bfq_queue *bfqq;
 	struct bfq_data *bfqd = e->elevator_data;
 	ssize_t num_char = 0;
+	TIME_DELTAS_INIT(1);
 
 	num_char += sprintf(page + num_char, "Tot reqs queued %d\n\n",
 			    bfqd->queued);
 
 	spin_lock_irq(&bfqd->lock);
-
+	TIME_DELTA_RECORD_START;
 	num_char += sprintf(page + num_char, "Active:\n");
 	list_for_each_entry(bfqq, &bfqd->active_list, bfqq_list) {
 		num_char += sprintf(page + num_char,
@@ -6185,7 +6337,7 @@ static ssize_t bfq_weights_show(struct elevator_queue *e, char *page)
 						     bfqq->last_wr_start_finish),
 				    jiffies_to_msecs(bfqq->wr_cur_max_time));
 	}
-
+	TIME_DELTA_RECORD_STOP("bfq_weights_show");
 	spin_unlock_irq(&bfqd->lock);
 
 	return num_char;

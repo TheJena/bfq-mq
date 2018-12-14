@@ -20,20 +20,20 @@
 /*
  * Enable TIME_DELTAS* macros and disable bfq_log_* macros
  */
-// #define TIME_DELTAS_ON
+#define TIME_DELTAS_ON
 
 /*
  * Print the time needed to execute the
  * measured piece of code (t_delta [ns])
  */
-// #define TIME_DELTA_PRINT_DURATIONS
+#define TIME_DELTA_PRINT_DURATIONS
 
 /*
  * Print the total cumulative execution time
  * of the measured piece of code (t_tot [ns]), and
  * the number of times it has been executed (calls)
  */
-// #define TIME_DELTA_PRINT_TOTAL_TIME_AND_CALLS
+#define TIME_DELTA_PRINT_TOTAL_TIME_AND_CALLS
 
 #ifdef TIME_DELTAS_ON
     #define TIME_DELTA_RECORD_PREFIX_FMT "%27s +%4d %-42s "
