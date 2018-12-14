@@ -1629,19 +1629,23 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 					     struct bfq_queue *bfqq,
 					     int old_wr_coeff,
 					     struct request *rq,
-					     bool *interactive)
+					     bool *interactive,
+					     u64 *t_)
 {
 	bool soft_rt, in_burst,	wr_or_deserves_wr,
 		bfqq_wants_to_preempt,
 		idle_for_long_time = bfq_bfqq_idle_for_long_time(bfqd, bfqq),
-		/*
-		 * See the comments on
-		 * bfq_bfqq_update_budg_for_activation for
-		 * details on the usage of the next variable.
-		 */
-		arrived_in_time =  ktime_get_ns() <=
-			bfqq->ttime.last_end_request +
-			bfqd->bfq_slice_idle * 3;
+		arrived_in_time;
+	int j = 0;
+
+	/*
+	 * See the comments on
+	 * bfq_bfqq_update_budg_for_activation for
+	 * details on the usage of the next variable.
+	 */
+	t_[1] =  ktime_get_ns();
+	arrived_in_time = t_[1] <= bfqq->ttime.last_end_request +
+				   bfqd->bfq_slice_idle * 3;
 
 	bfq_log_bfqq(bfqd, bfqq,
 		     "bfq_add_request non-busy: "
@@ -1655,7 +1659,6 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	BUG_ON(bfqq->entity.budget < bfqq->entity.service);
 
 	BUG_ON(bfqq == bfqd->in_service_queue);
-
 	/*
 	 * bfqq deserves to be weight-raised if:
 	 * - it is sync,
@@ -1664,10 +1667,12 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	 * - is linked to a bfq_io_cq (it is not shared in any sense)
 	 */
 	in_burst = bfq_bfqq_in_large_burst(bfqq);
+	t_[2] = ktime_get_ns();
 	soft_rt = bfqd->bfq_wr_max_softrt_rate > 0 &&
 		!in_burst &&
 		time_is_before_jiffies(bfqq->soft_rt_next_start) &&
 		bfqq->dispatched == 0;
+	t_[3] = ktime_get_ns();
 	*interactive =
 		!in_burst &&
 		idle_for_long_time;
@@ -1675,6 +1680,7 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 		(bfqq->wr_coeff > 1 ||
 		 (bfq_bfqq_sync(bfqq) &&
 		  bfqq->bic && (*interactive || soft_rt)));
+	t_[4] = ktime_get_ns();
 
 	bfq_log_bfqq(bfqd, bfqq,
 		     "bfq_add_request: "
@@ -1693,6 +1699,7 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 		bfq_bfqq_update_budg_for_activation(bfqd, bfqq,
 						    arrived_in_time,
 						    wr_or_deserves_wr);
+	t_[5] = ktime_get_ns();
 
 	/*
 	 * If bfqq happened to be activated in a burst, but has been
@@ -1712,22 +1719,37 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	    time_is_before_jiffies(
 		    bfqq->budget_timeout +
 		    msecs_to_jiffies(10000))) {
+		t_[6] = ktime_get_ns();
 		hlist_del_init(&bfqq->burst_list_node);
+		t_[7] = ktime_get_ns();
 		bfq_clear_bfqq_in_large_burst(bfqq);
+		t_[8] = ktime_get_ns();
+	} else {
+		t_[8] = t_[7] = t_[6] = ktime_get_ns();
 	}
 
 	bfq_clear_bfqq_just_created(bfqq);
+	t_[9] = ktime_get_ns();
 
 	if (!bfq_bfqq_IO_bound(bfqq)) {
+		t_[10] = ktime_get_ns();
+		for (j = 11; j < 15; j++)
+			t_[j] = t_[10];
 		if (arrived_in_time) {
 			bfqq->requests_within_timer++;
 			if (bfqq->requests_within_timer >=
-			    bfqd->bfq_requests_within_timer)
+			    bfqd->bfq_requests_within_timer) {
 				bfq_mark_bfqq_IO_bound(bfqq);
+				t_[11] = ktime_get_ns();
+			}
 		} else
 			bfqq->requests_within_timer = 0;
 		bfq_log_bfqq(bfqd, bfqq, "requests in time %d",
 			     bfqq->requests_within_timer);
+	} else {
+		t_[10] = ktime_get_ns();
+		for (j = 11; j < 15; j++)
+			t_[j] = t_[10];
 	}
 
 	if (bfqd->low_latency) {
@@ -1735,15 +1757,18 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 			/* wraparound */
 			bfqq->split_time =
 				jiffies - bfqd->bfq_wr_min_idle_time - 1;
+		t_[12] = ktime_get_ns();
 
 		if (time_is_before_jiffies(bfqq->split_time +
 					   bfqd->bfq_wr_min_idle_time)) {
+			t_[13] = ktime_get_ns();
 			bfq_update_bfqq_wr_on_rq_arrival(bfqd, bfqq,
 							 old_wr_coeff,
 							 wr_or_deserves_wr,
 							 *interactive,
 							 in_burst,
 							 soft_rt);
+			t_[14] = ktime_get_ns();
 
 			if (old_wr_coeff != bfqq->wr_coeff)
 				bfqq->entity.prio_changed = 1;
@@ -1753,8 +1778,10 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	bfqq->last_idle_bklogged = jiffies;
 	bfqq->service_from_backlogged = 0;
 	bfq_clear_bfqq_softrt_update(bfqq);
+	t_[15] = ktime_get_ns();
 
 	bfq_add_bfqq_busy(bfqd, bfqq);
+	t_[16] = ktime_get_ns();
 
 	/*
 	 * Expire in-service queue only if preemption may be needed
@@ -1769,13 +1796,16 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	if (bfqd->in_service_queue && bfqq_wants_to_preempt &&
 	    bfqd->in_service_queue->wr_coeff < bfqq->wr_coeff &&
 	    next_queue_may_preempt(bfqd)) {
+		t_[17] = ktime_get_ns();
 		struct bfq_queue *in_serv =
 			bfqd->in_service_queue;
 		BUG_ON(in_serv == bfqq);
 
 		bfq_bfqq_expire(bfqd, bfqd->in_service_queue,
 				false, BFQ_BFQQ_PREEMPTED);
-	}
+		t_[18] = ktime_get_ns();
+	} else
+		t_[18] = t_[17] = ktime_get_ns();
 }
 
 static void bfq_add_request(struct request *rq)
@@ -1785,6 +1815,28 @@ static void bfq_add_request(struct request *rq)
 	struct request *next_rq, *prev;
 	unsigned int old_wr_coeff = bfqq->wr_coeff;
 	bool interactive = false;
+	static const char * const names[] = {
+		".   bfq_bfqq_handle_idle_busy_switch",
+		"`-- bfq_bfqq_idle_for_long_time",
+		"`-- bfq_bfqq_in_large_burst",
+		"`-- time_is_before_jiffies",
+		"`-- bool interactive and wr_or_deserves_wr",
+		"`-- bfq_bfqq_update_budg_for_activation",
+		"`-- if .. _just_created .. _to_jiffies",
+		"`-- hlist_del_init",
+		"`-- bfq_clear_bfqq_in_large_burst",
+		"`-- bfq_clear_bfqq_just_created",
+		"`-- bfq_bfqq_IO_bound",
+		"`-- bfq_mark_bfqq_IO_bound",
+		"`-- time_is_after_jiffies",
+		"`-- time_is_before_jiffies",
+		"`-- bfq_update_bfqq_wr_on_rq_arrival",
+		"`-- bfq_clear_bfqq_softrt_update",
+		"`-- bfq_add_bfqq_busy",
+		"`-- next_queue_may_preempt",
+		"`-- bfq_bfqq_expire"};
+	u64 t_[20], t_delta[19];
+	int j;
 
 	bfq_log_bfqq(bfqd, bfqq, "size %u %s",
 		     blk_rq_sectors(rq), rq_is_sync(rq) ? "S" : "A");
@@ -1822,10 +1874,22 @@ static void bfq_add_request(struct request *rq)
 	if (prev != bfqq->next_rq)
 		bfq_pos_tree_add_move(bfqd, bfqq);
 
-	if (!bfq_bfqq_busy(bfqq)) /* switching to busy ... */
+	if (!bfq_bfqq_busy(bfqq)) { /* switching to busy ... */
+
+		memset(t_, 0, sizeof(t_));
+		t_[0] = ktime_get_ns();
 		bfq_bfqq_handle_idle_busy_switch(bfqd, bfqq, old_wr_coeff,
-						 rq, &interactive);
-	else {
+						 rq, &interactive, t_);
+		t_[19] = ktime_get_ns();
+		t_delta[0] = t_[19] - t_[0];
+		for (j = 1; j < 19; j++)
+			t_delta[j] = t_[j] - t_[j-1];
+
+		for (j = 0; j < 19; j++)
+			trace_printk("%27s +%4d %-42s %8s %9llu %2s\n",
+				     __FILE__, __LINE__, names[j],
+				    "t_delta:", t_delta[j], "ns");
+	} else {
 		if (bfqd->low_latency && old_wr_coeff == 1 && !rq_is_sync(rq) &&
 		    time_is_before_jiffies(
 				bfqq->last_wr_start_finish +
