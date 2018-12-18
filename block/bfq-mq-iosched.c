@@ -1631,6 +1631,15 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 					     struct request *rq,
 					     bool *interactive)
 {
+	static const char * const names[] = {
+	               ".   bfq_add_bfqq_busy",
+	               "`-- some BUG_ONs",
+	               "`-- bfq_activate_bfqq",
+	               "`-- bfq_mark_bfqq_busy",
+	               "`-- bfq_weights_tree_add",
+	               "`-- last if and BUG_ON"};
+	u64 t_[7], t_delta[6];
+	int j;
 	bool soft_rt, in_burst,	wr_or_deserves_wr,
 		bfqq_wants_to_preempt,
 		idle_for_long_time = bfq_bfqq_idle_for_long_time(bfqd, bfqq),
@@ -1754,7 +1763,18 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	bfqq->service_from_backlogged = 0;
 	bfq_clear_bfqq_softrt_update(bfqq);
 
-	bfq_add_bfqq_busy(bfqd, bfqq);
+	memset(t_, 0, sizeof(t_));
+	t_[0] = ktime_get_ns();
+	bfq_add_bfqq_busy(bfqd, bfqq, t_);
+	t_[6] = ktime_get_ns();
+	t_delta[0] = t_[6] - t_[0];
+	for (j = 1; j < 6; j++)
+		t_delta[j] = t_[j] - t_[j-1];
+
+	for (j = 0; j < 6; j++)
+		trace_printk("%27s +%4d %-42s %8s %9llu %2s\n",
+			     __FILE__, __LINE__, names[j],
+			     "t_delta:", t_delta[j], "ns");
 
 	/*
 	 * Expire in-service queue only if preemption may be needed
