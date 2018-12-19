@@ -850,6 +850,13 @@ static struct blkcg_gq *bfqg_to_blkg(struct bfq_group *bfqg);
 #endif /* CONFIG_BLK_DEV_IO_TRACE */
 #endif /* CONFIG_BFQ_REDIRECT_TO_CONSOLE */
 
+#undef bfq_log_bfqq
+#undef bfq_log_bfqg
+#undef bfq_log
+#define bfq_log_bfqq(bfqd, bfqq, fmt, args...)     ((void) (bfqq))
+#define bfq_log_bfqg(bfqd, bfqg, fmt, args...)     ((void) (bfqg))
+#define bfq_log(args...)
+
 /* Expiration reasons. */
 enum bfqq_expiration {
 	BFQ_BFQQ_TOO_IDLE = 0,		/*

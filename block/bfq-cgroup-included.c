@@ -620,6 +620,7 @@ static void bfq_bfqq_move(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 			  struct bfq_group *bfqg)
 {
 	struct bfq_entity *entity = &bfqq->entity;
+	u64 t_[5];
 
 	BUG_ON(!bfq_bfqq_busy(bfqq) && !RB_EMPTY_ROOT(&bfqq->sort_list));
 	BUG_ON(!RB_EMPTY_ROOT(&bfqq->sort_list) && !entity->on_st);
@@ -673,7 +674,7 @@ static void bfq_bfqq_move(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	BUG_ON(RB_EMPTY_ROOT(&bfqq->sort_list) && bfq_bfqq_busy(bfqq));
 	if (bfq_bfqq_busy(bfqq)) {
 		bfq_pos_tree_add_move(bfqd, bfqq);
-		bfq_activate_bfqq(bfqd, bfqq);
+		bfq_activate_bfqq(bfqd, bfqq, t_);
 	}
 
 	if (!bfqd->in_service_queue && !bfqd->rq_in_driver)

@@ -1992,17 +1992,21 @@ static void bfq_deactivate_bfqq(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	bfq_deactivate_entity(entity, ins_into_idle_tree, expiration);
 }
 
-static void bfq_activate_bfqq(struct bfq_data *bfqd, struct bfq_queue *bfqq)
+static void bfq_activate_bfqq(struct bfq_data *bfqd, struct bfq_queue *bfqq,
+			      u64 *t_)
 {
 	struct bfq_entity *entity = &bfqq->entity;
 	struct bfq_service_tree *st = bfq_entity_service_tree(entity);
+	t_[1] = ktime_get_ns();
 
 	BUG_ON(bfqq == bfqd->in_service_queue);
 	BUG_ON(entity->tree != &st->active && entity->tree != &st->idle &&
 	       entity->on_st);
 
+	t_[2] = ktime_get_ns();
 	bfq_activate_requeue_entity(entity, bfq_bfqq_non_blocking_wait_rq(bfqq),
 				    false, false);
+	t_[3] = ktime_get_ns();
 	bfq_clear_bfqq_non_blocking_wait_rq(bfqq);
 }
 
@@ -2055,12 +2059,31 @@ static void bfq_del_bfqq_busy(struct bfq_data *bfqd, struct bfq_queue *bfqq,
  */
 static void bfq_add_bfqq_busy(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 {
+	static const char * const names[] = {
+		".   bfq_activate_bfqq",
+		"`-- bfq_entity_service_tree",
+		"`-- BUG_ONs",
+		"`-- bfq_activate_requeue_entity",
+		"`-- bfq_clear_bfqq_non_blocking_wait_rq"};
+	u64 t_[5], t_delta[5];
+	int j;
 	BUG_ON(bfq_bfqq_busy(bfqq));
 	BUG_ON(bfqq == bfqd->in_service_queue);
 
 	bfq_log_bfqq(bfqd, bfqq, "add to busy");
 
-	bfq_activate_bfqq(bfqd, bfqq);
+	memset(t_, 0, sizeof(t_));
+	t_[0] = ktime_get_ns();
+	bfq_activate_bfqq(bfqd, bfqq, t_);
+	t_[4] = ktime_get_ns();
+	t_delta[0] = t_[4] - t_[0];
+	for (j = 1; j < 5; j++)
+		t_delta[j] = t_[j] - t_[j-1];
+
+	for (j = 0; j < 5; j++)
+		trace_printk("%27s +%4d %-42s %8s %9llu %2s\n",
+			     __FILE__, __LINE__, names[j],
+			     "t_delta:", t_delta[j], "ns");
 
 	bfq_mark_bfqq_busy(bfqq);
 	bfqd->busy_queues++;
