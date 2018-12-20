@@ -1331,21 +1331,25 @@ static void __bfq_activate_requeue_entity(struct bfq_entity *entity,
  */
 static void bfq_activate_requeue_entity(struct bfq_entity *entity,
 					bool non_blocking_wait_rq,
-					bool requeue, bool expiration)
+					bool requeue, bool expiration, u64 *t_)
 {
 	struct bfq_sched_data *sd;
 
 	for_each_entity(entity) {
 		BUG_ON(!entity);
 		sd = entity->sched_data;
+		t_[1] = ktime_get_ns();
 		__bfq_activate_requeue_entity(entity, sd, non_blocking_wait_rq);
+		t_[2] = ktime_get_ns();
 
 		BUG_ON(RB_EMPTY_ROOT(&sd->service_tree->active) &&
 		       RB_EMPTY_ROOT(&(sd->service_tree+1)->active) &&
 		       RB_EMPTY_ROOT(&(sd->service_tree+2)->active));
 
+		t_[4] = t_[3] = ktime_get_ns();
 		if (!bfq_update_next_in_service(sd, entity, expiration) &&
 		    !requeue) {
+			t_[4] = ktime_get_ns();
 			BUG_ON(!sd->next_in_service);
 			break;
 		}
@@ -1996,13 +2000,33 @@ static void bfq_activate_bfqq(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 {
 	struct bfq_entity *entity = &bfqq->entity;
 	struct bfq_service_tree *st = bfq_entity_service_tree(entity);
+	static const char * const names[] = {
+		".   bfq_requeue_bfqq",
+		"`-- __bfq_activate_requeue_entity",
+		"`-- BUG_ONs",
+		"`-- bfq_update_next_in_service",
+		"`-- bfq_clear_bfqq_non_blocking_wait_rq"};
+       u64 t_[6], t_delta[5];
+       int j;
 
 	BUG_ON(bfqq == bfqd->in_service_queue);
 	BUG_ON(entity->tree != &st->active && entity->tree != &st->idle &&
 	       entity->on_st);
 
+	t_[0] = ktime_get_ns();
 	bfq_activate_requeue_entity(entity, bfq_bfqq_non_blocking_wait_rq(bfqq),
-				    false, false);
+				    false, false, t_);
+	t_[5] = ktime_get_ns();
+	t_delta[0] = t_[5] - t_[0];
+
+	for (j = 2; j < 6; j++)
+		t_delta[j-1] = t_[j] - t_[j-1];
+
+	for (j = 0; j < 5; j++)
+		trace_printk("%27s +%4d %-42s %8s %9llu %2s\n",
+			     __FILE__, __LINE__, names[j],
+			     "t_delta:", t_delta[j], "ns");
+
 	bfq_clear_bfqq_non_blocking_wait_rq(bfqq);
 }
 
@@ -2010,9 +2034,11 @@ static void bfq_requeue_bfqq(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 			     bool expiration)
 {
 	struct bfq_entity *entity = &bfqq->entity;
+       u64 t_[6];
 
 	bfq_activate_requeue_entity(entity, false,
-				    bfqq == bfqd->in_service_queue, expiration);
+				    bfqq == bfqd->in_service_queue, expiration,
+				    t_);
 }
 
 static void bfqg_stats_update_dequeue(struct bfq_group *bfqg);
