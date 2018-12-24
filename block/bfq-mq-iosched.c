@@ -1689,10 +1689,12 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	 * Using the last flag, update budget and check whether bfqq
 	 * may want to preempt the in-service queue.
 	 */
+	TD_START("bfq_bfqq_update_budg_for_activation");
 	bfqq_wants_to_preempt =
 		bfq_bfqq_update_budg_for_activation(bfqd, bfqq,
 						    arrived_in_time,
 						    wr_or_deserves_wr);
+	TD_STOP("bfq_bfqq_update_budg_for_activation");
 
 	/*
 	 * If bfqq happened to be activated in a burst, but has been
@@ -1738,12 +1740,14 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 
 		if (time_is_before_jiffies(bfqq->split_time +
 					   bfqd->bfq_wr_min_idle_time)) {
+			TD_START("bfq_update_bfqq_wr_on_rq_arrival");
 			bfq_update_bfqq_wr_on_rq_arrival(bfqd, bfqq,
 							 old_wr_coeff,
 							 wr_or_deserves_wr,
 							 *interactive,
 							 in_burst,
 							 soft_rt);
+			TD_STOP("bfq_update_bfqq_wr_on_rq_arrival");
 
 			if (old_wr_coeff != bfqq->wr_coeff)
 				bfqq->entity.prio_changed = 1;
@@ -1754,6 +1758,7 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	bfqq->service_from_backlogged = 0;
 	bfq_clear_bfqq_softrt_update(bfqq);
 
+	/* measured internally by TD_[START|STOP] macros */
 	bfq_add_bfqq_busy(bfqd, bfqq);
 
 	/*
@@ -1785,6 +1790,7 @@ static void bfq_add_request(struct request *rq)
 	struct request *next_rq, *prev;
 	unsigned int old_wr_coeff = bfqq->wr_coeff;
 	bool interactive = false;
+	TD_START(__func__);
 
 	bfq_log_bfqq(bfqd, bfqq, "size %u %s",
 		     blk_rq_sectors(rq), rq_is_sync(rq) ? "S" : "A");
@@ -1810,7 +1816,9 @@ static void bfq_add_request(struct request *rq)
 	 * Check if this request is a better next-to-serve candidate.
 	 */
 	prev = bfqq->next_rq;
+	TD_START("bfq_choose_req");
 	next_rq = bfq_choose_req(bfqd, bfqq->next_rq, rq, bfqd->last_position);
+	TD_STOP("bfq_choose_req");
 	BUG_ON(!next_rq);
 	BUG_ON(!RQ_BFQQ(next_rq));
 	BUG_ON(RQ_BFQQ(next_rq) != bfqq);
@@ -1819,13 +1827,18 @@ static void bfq_add_request(struct request *rq)
 	/*
 	 * Adjust priority tree position, if next_rq changes.
 	 */
-	if (prev != bfqq->next_rq)
+	if (prev != bfqq->next_rq) {
+		TD_START("bfq_pos_tree_add_move");
 		bfq_pos_tree_add_move(bfqd, bfqq);
+		TD_STOP("bfq_pos_tree_add_move");
+	}
 
-	if (!bfq_bfqq_busy(bfqq)) /* switching to busy ... */
+	if (!bfq_bfqq_busy(bfqq)) { /* switching to busy ... */
+		TD_START("bfq_bfqq_handle_idle_busy_switch");
 		bfq_bfqq_handle_idle_busy_switch(bfqd, bfqq, old_wr_coeff,
 						 rq, &interactive);
-	else {
+		TD_STOP("bfq_bfqq_handle_idle_busy_switch");
+	} else {
 		if (bfqd->low_latency && old_wr_coeff == 1 && !rq_is_sync(rq) &&
 		    time_is_before_jiffies(
 				bfqq->last_wr_start_finish +
@@ -1842,8 +1855,11 @@ static void bfq_add_request(struct request *rq)
 				     jiffies_to_msecs(bfqq->wr_cur_max_time),
 				     bfqd->wr_busy_queues);
 		}
-		if (prev != bfqq->next_rq)
+		if (prev != bfqq->next_rq) {
+			TD_START("bfq_updated_next_req");
 			bfq_updated_next_req(bfqd, bfqq);
+			TD_STOP("bfq_updated_next_req");
+		}
 	}
 
 	/*
@@ -1875,6 +1891,7 @@ static void bfq_add_request(struct request *rq)
 	if (bfqd->low_latency &&
 		(old_wr_coeff == 1 || bfqq->wr_coeff == 1 || interactive))
 		bfqq->last_wr_start_finish = jiffies;
+	TD_STOP(__func__);
 }
 
 static struct request *bfq_find_rq_fmerge(struct bfq_data *bfqd,
@@ -5006,13 +5023,22 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 			    struct request *rq)
 {
 	struct bfq_io_cq *bic = RQ_BIC(rq);
+	TD_START(__func__);
 
 	if (rq->cmd_flags & REQ_META)
 		bfqq->meta_pending++;
 
+	TD_START("bfq_update_io_thinktime");
 	bfq_update_io_thinktime(bfqd, bfqq);
+	TD_STOP("bfq_update_io_thinktime");
+
+	TD_START("bfq_update_has_short_ttime");
 	bfq_update_has_short_ttime(bfqd, bfqq, bic);
+	TD_STOP("bfq_update_has_short_ttime");
+
+	TD_START("bfq_update_io_seektime");
 	bfq_update_io_seektime(bfqd, bfqq, rq);
+	TD_STOP("bfq_update_io_seektime");
 
 	bfq_log_bfqq(bfqd, bfqq,
 		     "has_short_ttime=%d (seeky %d)",
@@ -5040,8 +5066,10 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		 * will be unplugged and larger requests will be
 		 * dispatched.
 		 */
-		if (small_req && !budget_timeout)
+		if (small_req && !budget_timeout) {
+			TD_STOP(__func__);
 			return;
+		}
 
 		/*
 		 * A large enough request arrived, or the queue is to
@@ -5059,10 +5087,14 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		 * timestamps of the queue are not updated correctly.
 		 * See [1] for more details.
 		 */
-		if (budget_timeout)
+		if (budget_timeout) {
+			TD_START("bfq_bfqq_expire");
 			bfq_bfqq_expire(bfqd, bfqq, false,
 					BFQ_BFQQ_BUDGET_TIMEOUT);
+			TD_STOP("bfq_bfqq_expire");
+		}
 	}
+	TD_STOP(__func__);
 }
 
 /* returns true if it causes the idle timer to be disabled */
@@ -5082,7 +5114,9 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 	 * merge two bfq_queues.
 	 */
 	if (!in_interrupt()) {
+		TD_START("bfq_setup_cooperator");
 		new_bfqq = bfq_setup_cooperator(bfqd, bfqq, rq, true);
+		TD_STOP("bfq_setup_cooperator");
 		if (new_bfqq) {
 			if (bic_to_bfqq(RQ_BIC(rq), 1) != bfqq)
 				new_bfqq = bic_to_bfqq(RQ_BIC(rq), 1);
@@ -5107,28 +5141,34 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 			 * then complete the merge and redirect it to
 			 * new_bfqq.
 			 */
-			if (bic_to_bfqq(RQ_BIC(rq), 1) == bfqq)
+			if (bic_to_bfqq(RQ_BIC(rq), 1) == bfqq) {
+				TD_START("bfq_merge_bfqqs");
 				bfq_merge_bfqqs(bfqd, RQ_BIC(rq),
 						bfqq, new_bfqq);
+				TD_STOP("bfq_merge_bfqqs");
+			}
 
 			bfq_clear_bfqq_just_created(bfqq);
 			/*
 			 * rq is about to be enqueued into new_bfqq,
 			 * release rq reference on bfqq
 			 */
+			TD_START("bfq_put_queue");
 			bfq_put_queue(bfqq);
+			TD_STOP("bfq_put_queue");
 			rq->elv.priv[1] = new_bfqq;
 			bfqq = new_bfqq;
 		}
 	}
 
 	waiting = bfqq && bfq_bfqq_wait_request(bfqq);
-	bfq_add_request(rq);
+	bfq_add_request(rq);  // measured internally by TD_[START|STOP] macros
 	idle_timer_disabled = waiting && !bfq_bfqq_wait_request(bfqq);
 
 	rq->fifo_time = ktime_get_ns() + bfqd->bfq_fifo_expire[rq_is_sync(rq)];
 	list_add_tail(&rq->queuelist, &bfqq->fifo);
 
+	/* measured internally by TD_[START|STOP] macros */
 	bfq_rq_enqueued(bfqd, bfqq, rq);
 
 	return idle_timer_disabled;
@@ -5211,7 +5251,19 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 		BUG_ON(!(rq->rq_flags & RQF_GOT));
 		rq->rq_flags &= ~RQF_GOT;
 
+		TD_RESET;
+
+		TD_START("__bfq_insert_request");
 		idle_timer_disabled = __bfq_insert_request(bfqd, rq);
+		TD_STOP("__bfq_insert_request");
+
+		TD_PRINT___bfq_insert_request;
+		TD_PRINT_bfq_add_request;
+		TD_PRINT_bfq_rq_enqueued;
+		TD_PRINT_bfq_bfqq_handle_idle_busy_switch;
+		TD_PRINT_bfq_add_bfqq_busy;
+		TD_PRINT_bfq_activate_bfqq;
+
 		/*
 		 * Update bfqq, because, if a queue merge has occurred
 		 * in __bfq_insert_request, then rq has been

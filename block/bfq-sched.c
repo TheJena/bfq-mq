@@ -2001,8 +2001,11 @@ static void bfq_activate_bfqq(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 	BUG_ON(entity->tree != &st->active && entity->tree != &st->idle &&
 	       entity->on_st);
 
+	TD_START("bfq_activate_requeue_entity");
 	bfq_activate_requeue_entity(entity, bfq_bfqq_non_blocking_wait_rq(bfqq),
 				    false, false);
+	TD_STOP("bfq_activate_requeue_entity");
+
 	bfq_clear_bfqq_non_blocking_wait_rq(bfqq);
 }
 
@@ -2055,24 +2058,30 @@ static void bfq_del_bfqq_busy(struct bfq_data *bfqd, struct bfq_queue *bfqq,
  */
 static void bfq_add_bfqq_busy(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 {
+	TD_START(__func__);
 	BUG_ON(bfq_bfqq_busy(bfqq));
 	BUG_ON(bfqq == bfqd->in_service_queue);
 
 	bfq_log_bfqq(bfqd, bfqq, "add to busy");
 
+	TD_START("bfq_activate_bfqq");
 	bfq_activate_bfqq(bfqd, bfqq);
+	TD_STOP("bfq_activate_bfqq");
 
 	bfq_mark_bfqq_busy(bfqq);
 	bfqd->busy_queues++;
 
 	if (!bfqq->dispatched)
-		if (bfqq->wr_coeff == 1)
+		if (bfqq->wr_coeff == 1) {
+			TD_START("bfq_weights_tree_add");
 			bfq_weights_tree_add(bfqd, bfqq,
 					     &bfqd->queue_weights_tree);
+			TD_STOP("bfq_weights_tree_add");
+		}
 
 	if (bfqq->wr_coeff > 1) {
 		bfqd->wr_busy_queues++;
 		BUG_ON(bfqd->wr_busy_queues > bfqd->busy_queues);
 	}
-
+	TD_STOP(__func__);
 }

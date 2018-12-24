@@ -850,6 +850,181 @@ static struct blkcg_gq *bfqg_to_blkg(struct bfq_group *bfqg);
 #endif /* CONFIG_BLK_DEV_IO_TRACE */
 #endif /* CONFIG_BFQ_REDIRECT_TO_CONSOLE */
 
+/*
+ * BFQ_TIME_DELTAS_PROFILING_ENABLED allows
+ * to measure functions execution time
+ */
+// #define BFQ_TIME_DELTAS_PROFILING_ENABLED
+
+/*
+ * With macros like TD_ENABLE_<function_name>
+ * you can selectively enable measures
+ *
+ * The following macros are currently supported:
+ */
+// #define TD_ENABLE___bfq_insert_request
+// #define TD_ENABLE_bfq_add_request
+// #define TD_ENABLE_bfq_rq_enqueued
+// #define TD_ENABLE_bfq_bfqq_handle_idle_busy_switch
+// #define TD_ENABLE_bfq_add_bfqq_busy
+// #define TD_ENABLE_bfq_activate_bfqq
+
+/*
+ * Before taking measures you need to use TD_RESET macro
+ *
+ * Then you can take measures with: TD_START(<foo>) and TD_STOP(<foo>)
+ *
+ * Finally TD_PRINT_<function_name> macros print measures on the trace
+ */
+
+#ifdef BFQ_TIME_DELTAS_PROFILING_ENABLED
+	/*
+	 * Turn off other logging macros since they would add an
+	 * undesired overhead to the measurements
+	 */
+	#undef bfq_log_bfqq
+	#undef bfq_log_bfqg
+	#undef bfq_log
+	#define bfq_log_bfqq(bfqd, bfqq, fmt, args...)	((void) (bfqq))
+	#define bfq_log_bfqg(bfqd, bfqg, fmt, args...)	((void) (bfqg))
+	#define bfq_log(args...)			do {} while (0)
+
+	#define TD_N	20
+	static unsigned int td_i;
+	static u64 td_[TD_N];
+	static const char * const td_names[] = {
+	    #ifdef TD_ENABLE___bfq_insert_request
+		"__bfq_insert_request",					//  0
+			"bfq_setup_cooperator",				//  1
+			"bfq_merge_bfqqs",				//  2
+			"bfq_put_queue",				//  3
+			"bfq_add_request",				//  4
+			"bfq_rq_enqueued",				//  5
+	    #else /* TD_ENABLE___bfq_insert_request */
+		"please define TD_ENABLE___bfq_insert_request",
+		"please define TD_ENABLE___bfq_insert_request",
+		"please define TD_ENABLE___bfq_insert_request",
+		"please define TD_ENABLE___bfq_insert_request",
+		"please define TD_ENABLE___bfq_insert_request",
+		"please define TD_ENABLE___bfq_insert_request",
+	    #endif /* TD_ENABLE___bfq_insert_request */
+
+	    #ifdef TD_ENABLE_bfq_add_request
+		// bfq_add_request					//  4
+			"bfq_choose_req",				//  6
+			"bfq_pos_tree_add_move",			//  7
+			"bfq_bfqq_handle_idle_busy_switch",		//  8
+			"bfq_updated_next_req",				//  9
+	    #else /* TD_ENABLE_bfq_add_request */
+		"please define TD_ENABLE_bfq_add_request",
+		"please define TD_ENABLE_bfq_add_request",
+		"please define TD_ENABLE_bfq_add_request",
+		"please define TD_ENABLE_bfq_add_request",
+	    #endif /* TD_ENABLE_bfq_add_request */
+
+	    #ifdef TD_ENABLE_bfq_rq_enqueued
+		// bfq_rq_enqueued					//  5
+			"bfq_update_io_thinktime",			// 10
+			"bfq_update_has_short_ttime",			// 11
+			"bfq_update_io_seektime",			// 12
+			"bfq_bfqq_expire",				// 13
+	    #else /* TD_ENABLE_bfq_rq_enqueued */
+		"please define TD_ENABLE_bfq_rq_enqueued",
+		"please define TD_ENABLE_bfq_rq_enqueued",
+		"please define TD_ENABLE_bfq_rq_enqueued",
+		"please define TD_ENABLE_bfq_rq_enqueued",
+	    #endif /* TD_ENABLE_bfq_rq_enqueued */
+
+	    #ifdef TD_ENABLE_bfq_bfqq_handle_idle_busy_switch
+		// bfq_bfqq_handle_idle_busy_switch			//  8
+			"bfq_bfqq_update_budg_for_activation",		// 14
+			"bfq_update_bfqq_wr_on_rq_arrival",		// 15
+			"bfq_add_bfqq_busy",				// 16
+	    #else /* TD_ENABLE_bfq_bfqq_handle_idle_busy_switch */
+		"please define TD_ENABLE_bfq_bfqq_handle_idle_busy_switch",
+		"please define TD_ENABLE_bfq_bfqq_handle_idle_busy_switch",
+		"please define TD_ENABLE_bfq_bfqq_handle_idle_busy_switch",
+	    #endif /* TD_ENABLE_bfq_bfqq_handle_idle_busy_switch */
+
+	    #ifdef TD_ENABLE_bfq_add_bfqq_busy
+		// bfq_add_bfqq_busy					// 16
+			"bfq_activate_bfqq",				// 17
+			"bfq_weights_tree_add",				// 18
+	    #else /* TD_ENABLE_bfq_add_bfqq_busy */
+		"please define TD_ENABLE_bfq_add_bfqq_busy",
+		"please define TD_ENABLE_bfq_add_bfqq_busy",
+	    #endif /* TD_ENABLE_bfq_add_bfqq_busy */
+
+	    #ifdef TD_ENABLE_bfq_activate_bfqq
+		// bfq_activate_bfqq					// 17
+			"bfq_activate_requeue_entity",			// 19
+	    #else /* TD_ENABLE_bfq_activate_bfqq */
+		"please define TD_ENABLE_bfq_activate_bfqq",
+	    #endif /* TD_ENABLE_bfq_activate_bfqq */
+	};
+
+	#define TD_RESET	do {					      \
+		BUG_ON(sizeof(td_names) / sizeof(char *) != TD_N);	      \
+		for (td_i = 0; td_i < TD_N; td_i++)			      \
+			td_[td_i] = 0;					      \
+	} while (0)
+
+	#define TD_START(name)	do {					      \
+		for (td_i = 0; td_i < TD_N; td_i++)			      \
+			if (strcmp(name, td_names[td_i]) == 0) {	      \
+				BUG_ON(td_[td_i] != 0);			      \
+				td_[td_i] = ktime_get_ns();		      \
+				break;					      \
+			}						      \
+	} while (0)
+
+	#define TD_STOP(name)	do {					      \
+		for (td_i = 0; td_i < TD_N; td_i++)			      \
+			if (strcmp(name, td_names[td_i]) == 0) {	      \
+				BUG_ON(td_[td_i] == 0);			      \
+				td_[td_i] = ktime_get_ns() - td_[td_i];	      \
+				break;					      \
+			}						      \
+	} while (0)
+	#define TD_PRINT_PREFIX	"%-27s +%4u %s %-38s t_delta: %10llu ns\n"
+
+	/*
+	 * header is the index (in "td_names") of the "parent" function in the
+	 * current "block of measures"
+	 *
+	 * from and to are the first and the last indexes (in "td_names") of
+	 * the "child" functions in the current "block of measures"
+	 */
+	#define TD_PRINT(header, from, to)	do {			      \
+		trace_printk(TD_PRINT_PREFIX, __FILE__, __LINE__,	      \
+			     ".  ", td_names[header], td_[header]);	      \
+		for (td_i = from; td_i <= to; td_i++)			      \
+			trace_printk(TD_PRINT_PREFIX, __FILE__, __LINE__,     \
+				     "`--", td_names[td_i], td_[td_i]);	      \
+	} while (0)
+
+	#define TD_PRINT___bfq_insert_request		   TD_PRINT(0, 1, 5)
+	#define TD_PRINT_bfq_add_request		   TD_PRINT(4, 6, 9)
+	#define TD_PRINT_bfq_rq_enqueued		   TD_PRINT(5, 10, 13)
+	#define TD_PRINT_bfq_bfqq_handle_idle_busy_switch  TD_PRINT(8, 14, 16)
+	#define TD_PRINT_bfq_add_bfqq_busy		   TD_PRINT(16, 17, 18)
+	#define TD_PRINT_bfq_activate_bfqq		   TD_PRINT(17, 19, 19)
+
+#else /* BFQ_TIME_DELTAS_PROFILING_ENABLED */
+	#define TD_N
+	#define TD_RESET
+	#define TD_START(name)
+	#define TD_STOP(name)
+	#define TD_PRINT_PREFIX
+	#define TD_PRINT
+	#define TD_PRINT___bfq_insert_request
+	#define TD_PRINT_bfq_add_request
+	#define TD_PRINT_bfq_rq_enqueued
+	#define TD_PRINT_bfq_bfqq_handle_idle_busy_switch
+	#define TD_PRINT_bfq_add_bfqq_busy
+	#define TD_PRINT_bfq_activate_bfqq
+#endif /* BFQ_TIME_DELTAS_PROFILING_ENABLED */
+
 /* Expiration reasons. */
 enum bfqq_expiration {
 	BFQ_BFQQ_TOO_IDLE = 0,		/*
