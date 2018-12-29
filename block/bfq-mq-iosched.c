@@ -1688,6 +1688,22 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	/*
 	 * Using the last flag, update budget and check whether bfqq
 	 * may want to preempt the in-service queue.
+	 *
+	 * Statistics of "bfq_bfqq_update_budg_for_activation":
+	 * Q1 - 1.5 x IQR:  271.104 ns
+	 * Q1:              278.181 ns
+	 * median:          279.378 ns
+	 * Q3:              282.899 ns
+	 * Q3 + 1.5 x IQR:  289.977 ns
+	 * mean ± std:      298.565 ns ± 190.881 ns
+	 *
+	 * Testbed details:
+	 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+	 *                                     30 yes 0 verbose
+	 * cpu:       i7-7700HQ
+	 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+	 * os:        Debian testing (buster)
+	 * ssd:       Samsung 960 Pro M.2 NVMe
 	 */
 	TD_START("bfq_bfqq_update_budg_for_activation");
 	bfqq_wants_to_preempt =
@@ -1740,6 +1756,24 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 
 		if (time_is_before_jiffies(bfqq->split_time +
 					   bfqd->bfq_wr_min_idle_time)) {
+			/*
+			 * Statistics of "bfq_update_bfqq_wr_on_rq_arrival":
+			 * Q1 - 1.5 x IQR:  296.021 ns
+			 * Q1:              299.468 ns
+			 * median:          300.480 ns
+			 * Q3:              301.765 ns
+			 * Q3 + 1.5 x IQR:  305.212 ns
+			 * mean ± std:      317.803 ns ± 200.635 ns
+			 *
+			 * Testbed details:
+			 * benchmark: aggthr-with-greedy_rw.sh \
+			 *                bfq-mq 1 0 raw_seq . 30 yes 0 verbose
+			 * cpu:       i7-7700HQ
+			 * kernel:    4.18.0 (with bfq-mq at
+			 *                    commit 42d7e867c83c)
+			 * os:        Debian testing (buster)
+			 * ssd:       Samsung 960 Pro M.2 NVMe
+			 */
 			TD_START("bfq_update_bfqq_wr_on_rq_arrival");
 			bfq_update_bfqq_wr_on_rq_arrival(bfqd, bfqq,
 							 old_wr_coeff,
@@ -1783,6 +1817,22 @@ static void bfq_bfqq_handle_idle_busy_switch(struct bfq_data *bfqd,
 	}
 }
 
+/*
+ * Statistics of "bfq_add_request":
+ * Q1 - 1.5 x IQR:  3760.212 ns
+ * Q1:              3825.709 ns
+ * median:          3844.780 ns
+ * Q3:              3869.374 ns
+ * Q3 + 1.5 x IQR:  3934.871 ns
+ * mean ± std:      4183.081 ns ± 1421.936 ns
+ *
+ * Testbed details:
+ * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . 30 yes 0 verbose
+ * cpu:       i7-7700HQ
+ * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+ * os:        Debian testing (buster)
+ * ssd:       Samsung 960 Pro M.2 NVMe
+ */
 static void bfq_add_request(struct request *rq)
 {
 	struct bfq_queue *bfqq = RQ_BFQQ(rq);
@@ -1816,6 +1866,23 @@ static void bfq_add_request(struct request *rq)
 	 * Check if this request is a better next-to-serve candidate.
 	 */
 	prev = bfqq->next_rq;
+	/*
+	 * Statistics of "bfq_choose_req":
+	 * Q1 - 1.5 x IQR:  124.789 ns
+	 * Q1:              126.933 ns
+	 * median:          127.548 ns
+	 * Q3:              128.362 ns
+	 * Q3 + 1.5 x IQR:  130.506 ns
+	 * mean ± std:      137.420 ns ± 126.078 ns
+	 *
+	 * Testbed details:
+	 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+	 *                                     30 yes 0 verbose
+	 * cpu:       i7-7700HQ
+	 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+	 * os:        Debian testing (buster)
+	 * ssd:       Samsung 960 Pro M.2 NVMe
+	 */
 	TD_START("bfq_choose_req");
 	next_rq = bfq_choose_req(bfqd, bfqq->next_rq, rq, bfqd->last_position);
 	TD_STOP("bfq_choose_req");
@@ -1828,12 +1895,46 @@ static void bfq_add_request(struct request *rq)
 	 * Adjust priority tree position, if next_rq changes.
 	 */
 	if (prev != bfqq->next_rq) {
+		/*
+		 * Statistics of "bfq_pos_tree_add_move":
+		 * Q1 - 1.5 x IQR:  137.182 ns
+		 * Q1:              150.873 ns
+		 * median:          157.592 ns
+		 * Q3:              160.001 ns
+		 * mean ± std:      167.422 ns ± 134.519 ns
+		 * Q3 + 1.5 x IQR:  173.693 ns
+		 *
+		 * Testbed details:
+		 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+		 *                                     30 yes 0 verbose
+		 * cpu:       i7-7700HQ
+		 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+		 * os:        Debian testing (buster)
+		 * ssd:       Samsung 960 Pro M.2 NVMe
+		 */
 		TD_START("bfq_pos_tree_add_move");
 		bfq_pos_tree_add_move(bfqd, bfqq);
 		TD_STOP("bfq_pos_tree_add_move");
 	}
 
 	if (!bfq_bfqq_busy(bfqq)) { /* switching to busy ... */
+		/*
+		 * Statistics of "bfq_bfqq_handle_idle_busy_switch":
+		 * Q1 - 1.5 x IQR:  2975.280 ns
+		 * Q1:              3032.560 ns
+		 * median:          3048.220 ns
+		 * Q3:              3070.747 ns
+		 * Q3 + 1.5 x IQR:  3128.026 ns
+		 * mean ± std:      3339.477 ns ± 1202.249 ns
+		 *
+		 * Testbed details:
+		 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+		 *                                     30 yes 0 verbose
+		 * cpu:       i7-7700HQ
+		 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+		 * os:        Debian testing (buster)
+		 * ssd:       Samsung 960 Pro M.2 NVMe
+		 */
 		TD_START("bfq_bfqq_handle_idle_busy_switch");
 		bfq_bfqq_handle_idle_busy_switch(bfqd, bfqq, old_wr_coeff,
 						 rq, &interactive);
@@ -1856,6 +1957,23 @@ static void bfq_add_request(struct request *rq)
 				     bfqd->wr_busy_queues);
 		}
 		if (prev != bfqq->next_rq) {
+			/*
+			 * Statistics of "bfq_updated_next_req":
+			 * Q1 - 1.5 x IQR:  186.790 ns
+			 * Q1:              194.463 ns
+			 * median:          197.237 ns
+			 * Q3:              199.578 ns
+			 * mean ± std:      200.279 ns ± 17.136 ns
+			 * Q3 + 1.5 x IQR:  207.250 ns
+			 *
+			 * Testbed details:
+			 * benchmark: aggthr-with-greedy_rw.sh \
+			 *                bfq-mq 1 0 raw_seq . 30 yes 0 verbose
+			 * cpu:     i7-7700HQ
+			 * kernel:  4.18.0 (with bfq-mq at commit 42d7e867c83c)
+			 * os:      Debian testing (buster)
+			 * ssd:     Samsung 960 Pro M.2 NVMe
+			 */
 			TD_START("bfq_updated_next_req");
 			bfq_updated_next_req(bfqd, bfqq);
 			TD_STOP("bfq_updated_next_req");
@@ -5018,6 +5136,21 @@ static void bfq_update_has_short_ttime(struct bfq_data *bfqd,
 /*
  * Called when a new fs request (rq) is added to bfqq.  Check if there's
  * something we should do about it.
+ *
+ * Statistics of "bfq_rq_enqueued":
+ * Q1 - 1.5 x IQR:  1421.203 ns
+ * Q1:              1434.570 ns
+ * median:          1438.576 ns
+ * Q3:              1443.482 ns
+ * Q3 + 1.5 x IQR:  1456.850 ns
+ * mean ± std:      1521.608 ns ± 537.150 ns
+ *
+ * Testbed details:
+ * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . 30 yes 0 verbose
+ * cpu:       i7-7700HQ
+ * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+ * os:        Debian testing (buster)
+ * ssd:       Samsung 960 Pro M.2 NVMe
  */
 static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 			    struct request *rq)
@@ -5028,14 +5161,65 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 	if (rq->cmd_flags & REQ_META)
 		bfqq->meta_pending++;
 
+	/*
+	 * Statistics of "bfq_update_io_thinktime":
+	 * Q1 - 1.5 x IQR:  229.738 ns
+	 * Q1:              235.415 ns
+	 * median:          236.709 ns
+	 * Q3:              239.200 ns
+	 * Q3 + 1.5 x IQR:  244.878 ns
+	 * mean ± std:      250.180 ns ± 180.899 ns
+	 *
+	 * Testbed details:
+	 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+	 *                                     30 yes 0 verbose
+	 * cpu:       i7-7700HQ
+	 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+	 * os:        Debian testing (buster)
+	 * ssd:       Samsung 960 Pro M.2 NVMe
+	 */
 	TD_START("bfq_update_io_thinktime");
 	bfq_update_io_thinktime(bfqd, bfqq);
 	TD_STOP("bfq_update_io_thinktime");
 
+	/*
+	 * Statistics of "bfq_update_has_short_ttime":
+	 * Q1 - 1.5 x IQR:  219.336 ns
+	 * Q1:              223.124 ns
+	 * median:          224.184 ns
+	 * Q3:              225.650 ns
+	 * Q3 + 1.5 x IQR:  229.438 ns
+	 * mean ± std:      236.820 ns ± 175.751 ns
+	 *
+	 * Testbed details:
+	 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+	 *                                     30 yes 0 verbose
+	 * cpu:       i7-7700HQ
+	 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+	 * os:        Debian testing (buster)
+	 * ssd:       Samsung 960 Pro M.2 NVMe
+	 */
 	TD_START("bfq_update_has_short_ttime");
 	bfq_update_has_short_ttime(bfqd, bfqq, bic);
 	TD_STOP("bfq_update_has_short_ttime");
 
+	/*
+	 * Statistics of "bfq_update_io_seektime":
+	 * Q1 - 1.5 x IQR:  244.919 ns
+	 * Q1:              248.057 ns
+	 * median:          248.892 ns
+	 * Q3:              250.150 ns
+	 * Q3 + 1.5 x IQR:  253.288 ns
+	 * mean ± std:      263.399 ns ± 186.327 ns
+	 *
+	 * Testbed details:
+	 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+	 *                                     30 yes 0 verbose
+	 * cpu:       i7-7700HQ
+	 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+	 * os:        Debian testing (buster)
+	 * ssd:       Samsung 960 Pro M.2 NVMe
+	 */
 	TD_START("bfq_update_io_seektime");
 	bfq_update_io_seektime(bfqd, bfqq, rq);
 	TD_STOP("bfq_update_io_seektime");
@@ -5088,6 +5272,19 @@ static void bfq_rq_enqueued(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 		 * See [1] for more details.
 		 */
 		if (budget_timeout) {
+			/*
+			 * During 30 sec of benchmark, "bfq_bfqq_expire"
+			 * was never called.
+			 *
+			 * Testbed details:
+			 * benchmark: aggthr-with-greedy_rw.sh \
+			 *                bfq-mq 1 0 raw_seq . 30 yes 0 verbose
+			 * cpu:       i7-7700HQ
+			 * kernel:    4.18.0 (with bfq-mq at
+			 *                    commit 42d7e867c83c)
+			 * os:        Debian testing (buster)
+			 * ssd:       Samsung 960 Pro M.2 NVMe
+			 */
 			TD_START("bfq_bfqq_expire");
 			bfq_bfqq_expire(bfqd, bfqq, false,
 					BFQ_BFQQ_BUDGET_TIMEOUT);
@@ -5114,6 +5311,23 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 	 * merge two bfq_queues.
 	 */
 	if (!in_interrupt()) {
+		/*
+		 * Statistics of "bfq_setup_cooperator":
+		 * Q1 - 1.5 x IQR:  9.345 ns
+		 * Q1:              88.434 ns
+		 * mean ± std:      126.164 ns ± 284.292 ns
+		 * median:          135.073 ns
+		 * Q3:              141.160 ns
+		 * Q3 + 1.5 x IQR:  220.248 ns
+		 *
+		 * Testbed details:
+		 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+		 *                                     30 yes 0 verbose
+		 * cpu:       i7-7700HQ
+		 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+		 * os:        Debian testing (buster)
+		 * ssd:       Samsung 960 Pro M.2 NVMe
+		 */
 		TD_START("bfq_setup_cooperator");
 		new_bfqq = bfq_setup_cooperator(bfqd, bfqq, rq, true);
 		TD_STOP("bfq_setup_cooperator");
@@ -5142,6 +5356,20 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 			 * new_bfqq.
 			 */
 			if (bic_to_bfqq(RQ_BIC(rq), 1) == bfqq) {
+				/*
+				 * During 30 sec of benchmark,
+				 * "bfq_merge_bfqqs" was never called.
+				 *
+				 * Testbed details:
+				 * benchmark: aggthr-with-greedy_rw.sh \
+				 *                bfq-mq 1 0 raw_seq . \
+				 *                30 yes 0 verbose
+				 * cpu:       i7-7700HQ
+				 * kernel:    4.18.0 (with bfq-mq at
+				 *                    commit 42d7e867c83c)
+				 * os:        Debian testing (buster)
+				 * ssd:       Samsung 960 Pro M.2 NVMe
+				 */
 				TD_START("bfq_merge_bfqqs");
 				bfq_merge_bfqqs(bfqd, RQ_BIC(rq),
 						bfqq, new_bfqq);
@@ -5152,6 +5380,18 @@ static bool __bfq_insert_request(struct bfq_data *bfqd, struct request *rq)
 			/*
 			 * rq is about to be enqueued into new_bfqq,
 			 * release rq reference on bfqq
+			 *
+			 * During 30 sec of benchmark, "bfq_put_queue"
+			 * was never called.
+			 *
+			 * Testbed details:
+			 * benchmark: aggthr-with-greedy_rw.sh \
+			 *                bfq-mq 1 0 raw_seq . 30 yes 0 verbose
+			 * cpu:       i7-7700HQ
+			 * kernel:    4.18.0 (with bfq-mq at
+			 *                    commit 42d7e867c83c)
+			 * os:        Debian testing (buster)
+			 * ssd:       Samsung 960 Pro M.2 NVMe
 			 */
 			TD_START("bfq_put_queue");
 			bfq_put_queue(bfqq);
@@ -5253,6 +5493,23 @@ static void bfq_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 
 		TD_RESET;
 
+		/*
+		 * Statistics of "__bfq_insert_request":
+		 * Q1 - 1.5 x IQR:  5383.290 ns
+		 * Q1:              5455.758 ns
+		 * median:          5475.374 ns
+		 * Q3:              5504.071 ns
+		 * Q3 + 1.5 x IQR:  5576.539 ns
+		 * mean ± std:      5930.580 ns ± 1854.848 ns
+		 *
+		 * Testbed details:
+		 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+		 *                                     30 yes 0 verbose
+		 * cpu:       i7-7700HQ
+		 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+		 * os:        Debian testing (buster)
+		 * ssd:       Samsung 960 Pro M.2 NVMe
+		 */
 		TD_START("__bfq_insert_request");
 		idle_timer_disabled = __bfq_insert_request(bfqd, rq);
 		TD_STOP("__bfq_insert_request");

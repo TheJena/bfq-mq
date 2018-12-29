@@ -2001,6 +2001,23 @@ static void bfq_activate_bfqq(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 	BUG_ON(entity->tree != &st->active && entity->tree != &st->idle &&
 	       entity->on_st);
 
+	/*
+	 * Statistics of "bfq_activate_requeue_entity":
+	 * Q1 - 1.5 x IQR:  429.499 ns
+	 * Q1:              457.228 ns
+	 * median:          466.372 ns
+	 * Q3:              475.714 ns
+	 * mean ± std:      503.166 ns ± 255.332 ns
+	 * Q3 + 1.5 x IQR:  503.444 ns
+	 *
+	 * Testbed details:
+	 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+	 *                                     30 yes 0 verbose
+	 * cpu:       i7-7700HQ
+	 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+	 * os:        Debian testing (buster)
+	 * ssd:       Samsung 960 Pro M.2 NVMe
+	 */
 	TD_START("bfq_activate_requeue_entity");
 	bfq_activate_requeue_entity(entity, bfq_bfqq_non_blocking_wait_rq(bfqq),
 				    false, false);
@@ -2055,6 +2072,21 @@ static void bfq_del_bfqq_busy(struct bfq_data *bfqd, struct bfq_queue *bfqq,
 
 /*
  * Called when an inactive queue receives a new request.
+ *
+ * Statistics of "bfq_add_bfqq_busy":
+ * Q1 - 1.5 x IQR:  1523.489 ns
+ * Q1:              1565.392 ns
+ * median:          1575.398 ns
+ * Q3:              1593.327 ns
+ * Q3 + 1.5 x IQR:  1635.230 ns
+ * mean ± std:      1770.263 ns ± 801.333 ns
+ *
+ * Testbed details:
+ * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . 30 yes 0 verbose
+ * cpu:       i7-7700HQ
+ * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+ * os:        Debian testing (buster)
+ * ssd:       Samsung 960 Pro M.2 NVMe
  */
 static void bfq_add_bfqq_busy(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 {
@@ -2064,6 +2096,23 @@ static void bfq_add_bfqq_busy(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 
 	bfq_log_bfqq(bfqd, bfqq, "add to busy");
 
+	/*
+	 * Statistics of "bfq_activate_bfqq":
+	 * Q1 - 1.5 x IQR:  1110.945 ns
+	 * Q1:              1144.479 ns
+	 * median:          1153.746 ns
+	 * Q3:              1166.836 ns
+	 * Q3 + 1.5 x IQR:  1200.370 ns
+	 * mean ± std:      1232.832 ns ± 454.290 ns
+	 *
+	 * Testbed details:
+	 * benchmark: aggthr-with-greedy_rw.sh bfq-mq 1 0 raw_seq . \
+	 *                                     30 yes 0 verbose
+	 * cpu:       i7-7700HQ
+	 * kernel:    4.18.0 (with bfq-mq at commit 42d7e867c83c)
+	 * os:        Debian testing (buster)
+	 * ssd:       Samsung 960 Pro M.2 NVMe
+	 */
 	TD_START("bfq_activate_bfqq");
 	bfq_activate_bfqq(bfqd, bfqq);
 	TD_STOP("bfq_activate_bfqq");
@@ -2073,6 +2122,24 @@ static void bfq_add_bfqq_busy(struct bfq_data *bfqd, struct bfq_queue *bfqq)
 
 	if (!bfqq->dispatched)
 		if (bfqq->wr_coeff == 1) {
+			/*
+			 * Statistics of "bfq_weights_tree_add":
+			 * Q1 - 1.5 x IQR:  103.985 ns
+			 * Q1:              466.294 ns
+			 * median:          529.137 ns
+			 * mean ± std:      626.851 ns ± 466.841 ns
+			 * Q3:              707.833 ns
+			 * Q3 + 1.5 x IQR:  1070.142 ns
+			 *
+			 * Testbed details:
+			 * benchmark: aggthr-with-greedy_rw.sh \
+			 *                bfq-mq 1 0 raw_seq . 30 yes 0 verbose
+			 * cpu:       i7-7700HQ
+			 * kernel:    4.18.0 (with bfq-mq at
+			 *                    commit 42d7e867c83c)
+			 * os:        Debian testing (buster)
+			 * ssd:       Samsung 960 Pro M.2 NVMe
+			 */
 			TD_START("bfq_weights_tree_add");
 			bfq_weights_tree_add(bfqd, bfqq,
 					     &bfqd->queue_weights_tree);
